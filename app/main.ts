@@ -1,4 +1,5 @@
-import { readFileSync } from "fs";
+import { mkdirSync, readFileSync, writeFileSync } from "fs";
+import { dirname } from "path";
 import OpenAI from "openai";
 
 const readTool = {
@@ -15,6 +16,28 @@ const readTool = {
         },
       },
       required: ["file_path"],
+    },
+  },
+} as const;
+
+const writeTool = {
+  type: "function",
+  function: {
+    name: "Write",
+    description: "Write content to a file",
+    parameters: {
+      type: "object",
+      required: ["file_path", "content"],
+      properties: {
+        file_path: {
+          type: "string",
+          description: "The path of the file to write to",
+        },
+        content: {
+          type: "string",
+          description: "The content to write to the file",
+        },
+      },
     },
   },
 } as const;
@@ -99,20 +122,35 @@ function messageContentToString(content: unknown): string {
 }
 
 function executeToolCall(toolCall: NormalizedToolCall): string {
-  const functionName = toolCall.name;
-
-  if (functionName?.toLowerCase() !== "read") {
-    throw new Error(`unsupported tool call: ${functionName}`);
-  }
-
+  const functionName = toolCall.name?.toLowerCase();
   const args = parseArguments(toolCall.arguments);
   const filePath = args.file_path;
 
   if (typeof filePath !== "string" || filePath.length === 0) {
-    throw new Error("Read tool call missing required file_path argument");
+    throw new Error(`${toolCall.name ?? "Tool"} tool call missing required file_path argument`);
   }
 
-  return readFileSync(filePath, "utf8");
+  if (functionName === "read") {
+    return readFileSync(filePath, "utf8");
+  }
+
+  if (functionName === "write") {
+    const content = args.content;
+
+    if (typeof content !== "string") {
+      throw new Error("Write tool call missing required content argument");
+    }
+
+    const directory = dirname(filePath);
+    if (directory && directory !== ".") {
+      mkdirSync(directory, { recursive: true });
+    }
+
+    writeFileSync(filePath, content, "utf8");
+    return `Wrote ${content.length} bytes to ${filePath}`;
+  }
+
+  throw new Error(`unsupported tool call: ${toolCall.name}`);
 }
 
 async function main() {
@@ -140,7 +178,7 @@ async function main() {
     {
       role: "system",
       content:
-        "When the user asks about a local file, use the Read tool with the exact file path from the user's message. After receiving tool results, answer the user's question using only the needed information.",
+        "When the user asks about a local file, use the Read tool with the exact file path from the user's message. When the user asks you to create or modify a local file, use the Write tool with the exact target path and complete file content. After receiving tool results, answer the user's question using only the needed information. If the user asks you to reply with an exact phrase, reply with exactly that phrase and nothing else after the requested work is complete.",
     },
     { role: "user", content: prompt },
   ];
@@ -149,7 +187,7 @@ async function main() {
     const response = await client.chat.completions.create({
       model: "anthropic/claude-haiku-4.5",
       messages,
-      tools: [readTool],
+      tools: [readTool, writeTool],
       tool_choice: "auto",
     });
 
