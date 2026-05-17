@@ -1,3 +1,4 @@
+import { spawnSync } from "child_process";
 import { mkdirSync, readFileSync, writeFileSync } from "fs";
 import { dirname } from "path";
 import OpenAI from "openai";
@@ -36,6 +37,24 @@ const writeTool = {
         content: {
           type: "string",
           description: "The content to write to the file",
+        },
+      },
+    },
+  },
+} as const;
+
+const bashTool = {
+  type: "function",
+  function: {
+    name: "Bash",
+    description: "Execute a shell command",
+    parameters: {
+      type: "object",
+      required: ["command"],
+      properties: {
+        command: {
+          type: "string",
+          description: "The command to execute",
         },
       },
     },
@@ -124,18 +143,24 @@ function messageContentToString(content: unknown): string {
 function executeToolCall(toolCall: NormalizedToolCall): string {
   const functionName = toolCall.name?.toLowerCase();
   const args = parseArguments(toolCall.arguments);
-  const filePath = args.file_path;
-
-  if (typeof filePath !== "string" || filePath.length === 0) {
-    throw new Error(`${toolCall.name ?? "Tool"} tool call missing required file_path argument`);
-  }
 
   if (functionName === "read") {
+    const filePath = args.file_path;
+
+    if (typeof filePath !== "string" || filePath.length === 0) {
+      throw new Error("Read tool call missing required file_path argument");
+    }
+
     return readFileSync(filePath, "utf8");
   }
 
   if (functionName === "write") {
+    const filePath = args.file_path;
     const content = args.content;
+
+    if (typeof filePath !== "string" || filePath.length === 0) {
+      throw new Error("Write tool call missing required file_path argument");
+    }
 
     if (typeof content !== "string") {
       throw new Error("Write tool call missing required content argument");
@@ -148,6 +173,35 @@ function executeToolCall(toolCall: NormalizedToolCall): string {
 
     writeFileSync(filePath, content, "utf8");
     return `Wrote ${content.length} bytes to ${filePath}`;
+  }
+
+  if (functionName === "bash") {
+    const command = args.command;
+
+    if (typeof command !== "string" || command.length === 0) {
+      throw new Error("Bash tool call missing required command argument");
+    }
+
+    const result = spawnSync(command, {
+      cwd: process.cwd(),
+      encoding: "utf8",
+      maxBuffer: 10 * 1024 * 1024,
+      shell: true,
+    });
+
+    const stdout = result.stdout ?? "";
+    const stderr = result.stderr ?? "";
+    const output = `${stdout}${stderr}`;
+
+    if (result.error) {
+      return output || `Command failed: ${result.error.message}`;
+    }
+
+    if (result.status !== 0) {
+      return output || `Command failed with exit code ${result.status}`;
+    }
+
+    return output;
   }
 
   throw new Error(`unsupported tool call: ${toolCall.name}`);
@@ -178,7 +232,7 @@ async function main() {
     {
       role: "system",
       content:
-        "When the user asks about a local file, use the Read tool with the exact file path from the user's message. When the user asks you to create or modify a local file, use the Write tool with the exact target path and complete file content. After receiving tool results, answer the user's question using only the needed information. If the user asks you to reply with an exact phrase, reply with exactly that phrase and nothing else after the requested work is complete.",
+        "When the user asks about a local file, use the Read tool with the exact file path from the user's message. When the user asks you to create or modify a local file, use the Write tool with the exact target path and complete file content. When the user asks you to run a shell command or perform filesystem actions such as deleting files or creating directories, use the Bash tool. After receiving tool results, answer the user's question using only the needed information. If the user asks you to reply with an exact phrase, reply with exactly that phrase and nothing else after the requested work is complete.",
     },
     { role: "user", content: prompt },
   ];
@@ -187,7 +241,7 @@ async function main() {
     const response = await client.chat.completions.create({
       model: "anthropic/claude-haiku-4.5",
       messages,
-      tools: [readTool, writeTool],
+      tools: [readTool, writeTool, bashTool],
       tool_choice: "auto",
     });
 
