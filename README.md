@@ -1,34 +1,117 @@
-[![progress-banner](https://backend.codecrafters.io/progress/claude-code/2a1d23d3-c77b-4f34-88c4-418fe1470f78)](https://app.codecrafters.io/users/codecrafters-bot?r=2qF)
+# AI Agent CLI Tool
 
-This is a starting point for TypeScript solutions to the
-["Build Your own Claude Code" Challenge](https://codecrafters.io/challenges/claude-code).
+## Overview
 
-Claude Code is an AI coding assistant that uses Large Language Models (LLMs) to
-understand code and perform actions through tool calls. In this challenge,
-you'll build your own Claude Code from scratch by implementing an LLM-powered
-coding assistant.
+This is an AI-powered command-line agent built with TypeScript that leverages Claude AI (via OpenRouter) to execute file operations and shell commands. The agent can read files, write files, and execute bash commands based on natural language instructions.
 
-Along the way you'll learn about HTTP RESTful APIs, OpenAI-compatible tool
-calling, agent loop, and how to integrate multiple tools into an AI assistant.
+## What It Does
 
-**Note**: If you're viewing this repo on GitHub, head over to
-[codecrafters.io](https://codecrafters.io) to try the challenge.
+The application implements an agentic loop that:
 
-# Passing the first stage
+1. **Accepts natural language prompts** - Users provide instructions via the `-p` command-line flag
+2. **Communicates with Claude AI** - Sends prompts to Anthropic's Claude Haiku model via OpenRouter API
+3. **Executes tool calls** - Claude can request the agent to:
+   - **Read files** - Retrieve file contents
+   - **Write files** - Create or modify files with specific content
+   - **Execute bash commands** - Run shell commands for filesystem operations
+4. **Iterates intelligently** - Continues the conversation loop for up to 10 iterations, allowing Claude to refine requests and achieve complex tasks
 
-The entry point for your `claude-code` implementation is in `app/main.ts`. Study
-and uncomment the relevant code, and submit to pass the first stage:
+## How It Works
 
-```sh
-codecrafters submit
+### Architecture
+
+The agent follows a standard agentic pattern:
+
+```
+User Prompt → Claude AI → Tool Calls → Tool Execution → Results → Claude Response → Output
 ```
 
-# Stage 2 & beyond
+### Key Components
 
-Note: This section is for stages 2 and beyond.
+#### Tool Definitions
+Three tools are defined for Claude to use:
 
-1. Ensure you have `bun (1.3)` installed locally.
-2. Run `./your_program.sh` to run your program, which is implemented in
-   `app/main.ts`.
-3. Run `codecrafters submit` to submit your solution to CodeCrafters. Test
-   output will be streamed to your terminal.
+- **Read Tool** - Reads and returns file contents
+- **Write Tool** - Writes content to files (creates directories as needed)
+- **Bash Tool** - Executes shell commands with full output capture
+
+#### Tool Call Handling
+
+The application normalizes tool calls from different AI providers:
+- **OpenAI/OpenRouter format** - `message.tool_calls[].function.name|arguments`
+- **Claude format** - Content blocks with `type: "tool_use"`
+
+#### Execution Loop
+
+1. Sends user prompt + message history to Claude
+2. Receives response with potential tool calls
+3. Extracts and validates tool calls
+4. Executes each tool call and captures results
+5. Appends tool results to message history
+6. Repeats until Claude provides a final text response or max iterations reached (10)
+
+### Usage
+
+```bash
+npx ts-node app/main.ts -p "your instruction here"
+```
+
+**Environment Variables Required:**
+- `OPENROUTER_API_KEY` - Your OpenRouter API key for accessing Claude
+- `OPENROUTER_BASE_URL` (optional) - Defaults to `https://openrouter.ai/api/v1`
+
+### Examples
+
+```bash
+# Read a file
+npx ts-node app/main.ts -p "What's in package.json?"
+
+# Create a file
+npx ts-node app/main.ts -p "Create a file called test.txt with the content 'Hello World'"
+
+# Complex operation
+npx ts-node app/main.ts -p "Create a directory called 'logs' and write the current date to a file called 'logs/timestamp.txt'"
+
+# Execute commands
+npx ts-node app/main.ts -p "List all TypeScript files in the current directory"
+```
+
+## System Behavior
+
+The agent operates with a system prompt that instructs Claude to:
+- Use the **Read** tool when asked about local files
+- Use the **Write** tool when asked to create or modify files
+- Use the **Bash** tool for shell operations
+- Provide concise answers using only necessary information
+- Follow exact instructions when requested
+
+## Error Handling
+
+The application includes robust error handling for:
+- Missing API key configuration
+- Invalid tool arguments
+- Command execution failures
+- File I/O errors
+- Exceeding maximum iteration limit (10)
+
+All errors are caught and printed to stderr with a non-zero exit code.
+
+## Dependencies
+
+- **OpenAI SDK** - For API communication (works with OpenRouter)
+- **Node.js built-ins** - `child_process`, `fs`, `path`
+
+## Limitations
+
+- Maximum 10 agentic iterations per request to prevent infinite loops
+- 10MB max buffer for bash command output
+- Requires valid OpenRouter API credentials
+- Claude Haiku model is used (balance of speed and capability)
+
+## Future Enhancements
+
+- Support for additional tools (network requests, database queries)
+- Configurable model selection
+- Streaming response support
+- Tool call retry logic
+- Custom system prompts
